@@ -1,1 +1,2 @@
-# TP-Integrador-El-buffet-de-Alberto
+Cada programa compila por si solo, lo que si, para trabajar mas ordenado, centralicé las rutas dentro de una carpeta llamada /datos alli se encontraran y deben encontrarse los .dat que cada programa necesitará para compilar y trabajar, como por ejemplo comandas_historicas.dat, inventario.dat, etc, y el resto de archivos .dat que se irán generando, se guardarán tambien allí.
+el orden de compilación es el siguiente: normalizacion.cpp, ventas.cpp, cierre.cpp, resumen.cpp
