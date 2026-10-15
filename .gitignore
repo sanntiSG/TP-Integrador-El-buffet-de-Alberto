@@ -1,9 +1,2 @@
 *.exe
-*.out
-/normalizacion
-/ventas
-/cierre
-/resumen
-build/
 /*.dat
-.claude/
