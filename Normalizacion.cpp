@@ -329,7 +329,7 @@ void OrganizadorDeOrdenador(const char* nombre) //le dice a ordenadorDeArchivos 
         bool yaEsta = false;
         for (int i = 0; i < cantFechas; i++)
         {
-            if (strcmp(fechas[i], ch.fecha) == 0)
+            if (strcasecmp(fechas[i], ch.fecha) == 0)
             {
                 yaEsta = true;
                 break;
