@@ -34,7 +34,7 @@ struct Producto {
 };
 
 // Rutas organizadas
-const char* RUTA_INV       = "../datos/inventario.dat";              
+const char* RUTA_INV       = "../datos/inventario.dat";
 const char* RUTA_MOZOS     = "../datos/mozos.dat";
 
 const int K = 5; //numero al azar para encriptar password
@@ -97,29 +97,71 @@ bool buscarMozoPorId(int idBuscado, Mozo& resultado)
     return false; //no lo encontro
 }
 
-//busqueda binaria ya que inventario.dat esta ordenado por codigo de producto
-int buscarProducto(Producto arrDeProductos[], int len, int codigoBuscado)
+//  Busqueda binaria en inventario.dat; devuelve la posicion (-1 si no existe) y carga 'resultado'.
+//  Busqueda binaria en inventario.dat; devuelve la posicion (-1 si no existe) y carga 'resultado'.
+int buscarProductoEnArchivo(int codigoBuscado, Producto& resultado)
 {
-    int inicio = 0;
-    int final = len - 1;
-    while (inicio <= final)
-    {
-        int medio = (inicio + final) / 2;
+    FILE* fInv = fopen(RUTA_INV, "rb");
+    if (fInv == NULL) return -1;
 
-        if (arrDeProductos[medio].codigo == codigoBuscado)
+    // Contamos cuantos productos hay leyendo el archivo entero
+    long cantProductos = 0;
+    Producto aux;
+    while (fread(&aux, sizeof(Producto), 1, fInv) == 1)
+    {
+        cantProductos++;
+    }
+    fseek(fInv, 0, SEEK_SET);   // volver al principio
+
+    long pri = 0;
+    long ult = cantProductos - 1;
+    long pos = -1;
+
+    while (pri <= ult && pos == -1)
+    {
+        long med = (pri + ult) / 2;
+        fseek(fInv, med * sizeof(Producto), SEEK_SET);
+        Producto p;
+        fread(&p, sizeof(Producto), 1, fInv);
+
+        if (p.codigo == codigoBuscado)
         {
-            return medio;
+            pos = med;
+            resultado = p;
         }
-        else if (arrDeProductos[medio].codigo < codigoBuscado)
+        else if (p.codigo < codigoBuscado)
         {
-            inicio = medio + 1; //pasa el siguiente
+            pri = med + 1;
         }
         else
         {
-            final = medio - 1;
+            ult = med - 1;
         }
     }
-    return -1;
+    fclose(fInv);
+    return pos;
+}
+
+//  Edicion in situ: descuenta 'cantidad' del stock del registro en la posicion 'pos'
+void actualizarStockEnArchivo(long pos, int cantidad)
+{
+    FILE* fInv = fopen(RUTA_INV, "rb+");
+    if (fInv == NULL) return;
+
+    fseek(fInv, pos * sizeof(Producto), SEEK_SET);
+    Producto p;
+    fread(&p, sizeof(Producto), 1, fInv);
+
+    p.stockActual -= cantidad;
+    if (p.stockActual < 0)
+    {
+        p.stockActual = 0;
+    }
+
+    // el puntero quedo justo despues del registro leido, retrocedemos y sobreescribimos
+    fseek(fInv, -(long)sizeof(Producto), SEEK_CUR);
+    fwrite(&p, sizeof(Producto), 1, fInv);
+    fclose(fInv);
 }
 
 //  Login del mozo
@@ -162,44 +204,6 @@ int loginMozo()
 
     cout << "Login correcto. Bienvenido/a " << mozoEncontrado.nombre << ".\n";
     return mozoEncontrado.idMozo;
-}
-
-//  Cargar el inventario en memoria
-int cargarInventario(Producto productos[], int len) //len seria el tope
-{
-    FILE *f = fopen(RUTA_INV, "rb");
-    if (f == NULL)
-    {
-        cout << "No se pudo abrir el inventario.\n";
-        return 0;
-    }
-
-    int cantProductos = 0;
-    while (cantProductos < len && fread(&productos[cantProductos], sizeof(Producto), 1, f) == 1)
-    {
-        cantProductos++;
-    }
-    fclose(f);
-    return cantProductos;
-}
-
-//  Guardar el inventario actualizado
-void guardarInventario(Producto productos[], int cantProductos)
-{
-    FILE *f = fopen(RUTA_INV, "wb");
-    if (f == NULL)
-    {
-        cout << "No se pudo escribir el inventario.\n";
-        return;
-    }
-
-    for (int i = 0; i < cantProductos; i++)
-    {
-        fwrite(&productos[i], sizeof(Producto), 1, f);
-    }
-    fclose(f);
-
-    cout << "Inventario actualizado escrito en " << RUTA_INV << "\n";
 }
 
 //  Ordenar un archivo de dia por idMozo
@@ -249,24 +253,14 @@ void cargarVentasDelDia(const char* fecha)
     agregarTexto(archivoDia, fecha);
     agregarTexto(archivoDia, ".dat");
 
-    // 2) Cargar el inventario en memoria
-    Producto productos[10000];
-    int cantProductos = cargarInventario(productos, 10000);
-
-    if (cantProductos == 0)
-    {
-        cout << "No hay productos en el inventario. Fin.\n";
-        return;
-    }
-
-    // 3) Loop de carga mientras se ejecuta
+    // 2) Loop de carga mientras se ejecuta
     char seguir = 's';
 
     while (seguir == 's' || seguir == 'S')
     {
         cout << "\nNUEVA VENTA\n";
 
-        // 3.1) Login del mozo
+        // 2.1) Login del mozo
         int idMozo = loginMozo();
 
         if (idMozo == -1)
@@ -275,14 +269,13 @@ void cargarVentasDelDia(const char* fecha)
         }
         else
         {
-            // 3.2) Pedir codigo de producto
+            // 2.2) Pedir codigo de producto
             int codigoProducto = 0;
             cout << "Ingrese el codigo del producto: ";
             cin >> codigoProducto;
 
-            int posProducto = -1;
-
-            posProducto = buscarProducto(productos, cantProductos, codigoProducto);
+            Producto producto;
+            int posProducto = buscarProductoEnArchivo(codigoProducto, producto);
 
             if (posProducto == -1)
             {
@@ -290,33 +283,33 @@ void cargarVentasDelDia(const char* fecha)
             }
             else
             {
-                // 3.3) Pedir cantidad
+                // 2.3) Pedir cantidad
                 int cantidad;
                 cout << "Ingrese la cantidad: ";
                 cin >> cantidad;
 
-                // 3.4) Validar stock (caso raro: producto sin stock)
+                // 2.4) Validar stock (caso raro: producto sin stock)
                 if (cantidad <= 0)
                 {
                     cout << "ERROR: la cantidad tiene que ser mayor a 0.\n";
                 }
-                else if (productos[posProducto].stockActual < cantidad)
+                else if (producto.stockActual < cantidad)
                 {
-                    cout << "ERROR: no hay stock suficiente. Disponible: " << productos[posProducto].stockActual << "\n";
+                    cout << "ERROR: no hay stock suficiente. Disponible: " << producto.stockActual << "\n";
                 }
                 else
                 {
-                    // 3.5) Calcular comision
-                    float comision = cantidad * productos[posProducto].precio * TASA_COMISION;
+                    // 2.5) Calcular comision
+                    float comision = cantidad * producto.precio * TASA_COMISION;
 
-                    // 3.6) Armar la comanda
+                    // 2.6) Armar la comanda
                     Comanda c;
                     c.idMozo         = idMozo;
                     c.codigoProducto = codigoProducto;
                     c.cantidad       = cantidad;
                     c.comision       = comision;
 
-                    // 3.7) Escribir en el archivo del dia
+                    // 2.7) Escribir en el archivo del dia
                     FILE *fDia = fopen(archivoDia, "ab"); //agregar binario si existe agrega al final o crea archivo
                     if (fDia == NULL)
                     {
@@ -329,8 +322,8 @@ void cargarVentasDelDia(const char* fecha)
                         fwrite(&c, sizeof(Comanda), 1, fDia);
                         fclose(fDia);
 
-                        // 3.8) Descontar stock
-                        productos[posProducto].stockActual -= cantidad;
+                        // 2.8) Descontar stock directamente en el archivo (edicion in situ)
+                        actualizarStockEnArchivo(posProducto, cantidad);
 
                         cout << "Venta cargada. Comision: $" << comision << "\n";
                     }
@@ -342,22 +335,12 @@ void cargarVentasDelDia(const char* fecha)
             }
         }
 
-        // 3.9) Preguntar si sigue
+        // 2.9) Preguntar si sigue
         cout << "Cargar otra venta? (s/n): ";
         cin >> seguir;
-
-        if (cin.fail()) //si la entrada fallo, cortamos para no quedar en un ciclo infinito
-        {
-            cin.clear();
-            cin.ignore(1000, '\n');
-            seguir = 'n';
-        }
     }
 
-    // 4) Guardar inventario actualizado
-    guardarInventario(productos, cantProductos);
-
-    // 5) Ordenar el archivo del dia por idMozo
+    // 3) Ordenar el archivo del dia por idMozo
     OrdenarArchivoDia(archivoDia);
 
     cout << "\nCarga finalizada. Archivo " << archivoDia << " ordenado por mozo.\n";
