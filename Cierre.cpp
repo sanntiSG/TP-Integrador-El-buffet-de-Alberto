@@ -9,8 +9,11 @@ using namespace std;
 //  Junta las planillas de todos los días de la semana en una sola
 //  planilla semanal (comandas_semana_sX-mm.dat), ordenada por mozo.
 //
-//  Lee: comandas_dd-mm-aaaa.dat (varios)
+//  Lee: comandas_dd-mm-aaaa.dat (varios, cada uno ya ordenado por mozo)
 //  Genera: comandas_semana_sX-mm.dat
+//
+//  Usa apareo de N archivos: aprovecha que cada planilla diaria ya viene
+//  ordenada por idMozo y las combina en una sola pasada sin reordenar.
 
 struct Comanda {
     int   idMozo;
@@ -19,7 +22,7 @@ struct Comanda {
     float comision;
 };
 
-// Cantidad de días en la semana (para saber cuántos archivos leer)
+// Cantidad maxima de dias que se pueden ingresar
 const int MAX_FECHAS = 100;
 
 //agregamos texto al final de otro texto
@@ -42,36 +45,44 @@ void agregarTexto(char* destino, const char* origen)
 }
 
 //le pedimos al usuario las fechas de los dias de la semana (para saber que archivos de dia leer)
+//si el usuario ingresa dos veces la misma fecha, la segunda se ignora para evitar duplicar ventas
 int pedirFechas(char fechas[][11], int len) //el len seria nuestro tope
 {
     int cantFechas;
     cout << "Ingrese la cantidad de dias de la semana (max " << len << "): ";
     cin >> cantFechas;
 
+    int cantCargadas = 0;
     for (int i = 0; i < cantFechas; i++)
     {
+        char fechaIngresada[11];
         cout << "Ingrese la fecha del dia " << i + 1 << " (DD-MM-AAAA): ";
-        cin >> fechas[i];
-    }
+        cin >> fechaIngresada;
 
-    return cantFechas;
-}
-
-//ordenamiento burbuja por idMozo
-void ordenarComandas(Comanda comandas[], int cantidad)
-{
-    for (int i = 0; i < cantidad - 1; i++)
-    {
-        for (int j = i + 1; j < cantidad; j++)
+        // verificar si ya fue cargada para evitar duplicados
+        bool duplicada = false;
+        int j = 0;
+        while (j < cantCargadas && !duplicada)
         {
-            if (comandas[i].idMozo > comandas[j].idMozo)
+            if (strcasecmp(fechas[j], fechaIngresada) == 0)
             {
-                Comanda aux = comandas[i];
-                comandas[i] = comandas[j];
-                comandas[j] = aux;
+                duplicada = true;
             }
+            j++;
+        }
+
+        if (!duplicada && cantCargadas < len)
+        {
+            strcpy(fechas[cantCargadas], fechaIngresada);
+            cantCargadas++;
+        }
+        else if (duplicada)
+        {
+            cout << "AVISO: la fecha " << fechaIngresada << " ya fue cargada. Se omite.\n";
         }
     }
+
+    return cantCargadas;
 }
 
 //recorremos el archivo semanal y mostramos su contenido por pantalla
@@ -91,8 +102,7 @@ void mostrarArchivoSemana(const char* ruta)
     while (fread(&c, sizeof(Comanda), 1, f) == 1)
     {
         nro++;
-        cout << "#" << nro
-             << " | idMozo=" << c.idMozo
+        cout << "#" << nro << " | idMozo=" << c.idMozo
              << " | prod=" << c.codigoProducto
              << " | cant=" << c.cantidad
              << " | com=$" << c.comision << endl;
@@ -191,65 +201,106 @@ int main()
         return 0;
     }
 
-    // 5) Ir leyendo cada archivo de dia y volcando todo en un array grande
-    Comanda todasLasComandas[10000];
-    int cantComandas = 0;
+    // 5) Abrir todos los archivos de dia y leer el primer registro de cada uno (apareo)
+    FILE* archivos[MAX_FECHAS];
+    Comanda actuales[MAX_FECHAS];  // registro actual leido de cada archivo
+    bool hayMas[MAX_FECHAS];       // indica si ese archivo todavia tiene registros
 
     for (int i = 0; i < cantFechas; i++)
     {
-        // armamos el nombre del archivo del dia
+        archivos[i] = NULL;
+        hayMas[i] = false;
+    }
+
+    for (int i = 0; i < cantFechas; i++)
+    {
         char archivoDia[64];
         strcpy(archivoDia, "../datos/comandas_");
         agregarTexto(archivoDia, fechas[i]);
         agregarTexto(archivoDia, ".dat");
 
-        FILE* fDia = fopen(archivoDia, "rb");
-
-        if (fDia == NULL)
+        archivos[i] = fopen(archivoDia, "rb");
+        if (archivos[i] == NULL)
         {
             cout << "AVISO: no existe la planilla del dia "
-                << fechas[i] << ". Se omite.\n";
+                 << fechas[i] << ". Se omite.\n";
         }
         else
         {
-            // leemos todas las comandas de ese dia
-            Comanda c;
-            while (fread(&c, sizeof(Comanda), 1, fDia) == 1)
+            // lectura anticipada: cargamos el primer registro de cada archivo
+            if (fread(&actuales[i], sizeof(Comanda), 1, archivos[i]) == 1)
             {
-                todasLasComandas[cantComandas] = c;
-                cantComandas++;
+                hayMas[i] = true;
             }
-
-            fclose(fDia);
+            else
+            {
+                fclose(archivos[i]);
+                archivos[i] = NULL;
+            }
         }
     }
 
-    if (cantComandas == 0)
+    // 6) Crear el archivo semanal y escribir usando el apareo
+    FILE* fSemana = fopen(archivoSemana, "wb");
+    if (fSemana == NULL)
+    {
+        for (int i = 0; i < cantFechas; i++)
+        {
+            if (archivos[i] != NULL)
+            {
+                fclose(archivos[i]);
+            }
+        }
+        cout << "No se pudo crear el archivo semanal." << endl;
+        return 0;
+    }
+
+    int cantEscritas = 0;
+    bool hayAlguno = true;
+    while (hayAlguno)
+    {
+        // buscar el archivo con el menor idMozo entre los que aun tienen registros
+        int minPos = -1;
+        for (int i = 0; i < cantFechas; i++)
+        {
+            if (hayMas[i])
+            {
+                if (minPos == -1 || actuales[i].idMozo < actuales[minPos].idMozo)
+                {
+                    minPos = i;
+                }
+            }
+        }
+
+        if (minPos == -1)
+        {
+            hayAlguno = false; // todos los archivos se agotaron
+        }
+        else
+        {
+            fwrite(&actuales[minPos], sizeof(Comanda), 1, fSemana);
+            cantEscritas++;
+
+            // avanzar en el archivo del que tomamos el registro
+            if (fread(&actuales[minPos], sizeof(Comanda), 1, archivos[minPos]) != 1)
+            {
+                hayMas[minPos] = false;
+                fclose(archivos[minPos]);
+                archivos[minPos] = NULL;
+            }
+        }
+    }
+    fclose(fSemana);
+
+    if (cantEscritas == 0)
     {
         cout << "No se encontraron comandas para la semana. Fin." << endl;
         return 0;
     }
 
-    // 6) Ordenar todo por idMozo
-    ordenarComandas(todasLasComandas, cantComandas);
-
-    // 7) Escribir el archivo semanal
-    FILE* fSemana = fopen(archivoSemana, "wb");
-    if (fSemana == NULL)
-    {
-        cout << "No se pudo crear el archivo semanal." << endl;
-        return 0;
-    }
-
-    for (int i = 0; i < cantComandas; i++)
-    {
-        fwrite(&todasLasComandas[i], sizeof(Comanda), 1, fSemana);
-    }
-    fclose(fSemana);
-
     cout << "Archivo semanal creado: " << archivoSemana << endl;
 
-    // 8) Mostrar el contenido para verificar
+    // 7) Mostrar el contenido para verificar
     mostrarArchivoSemana(archivoSemana);
 
     return 0;
