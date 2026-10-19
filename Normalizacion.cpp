@@ -143,7 +143,7 @@ void CrearMozos(const char* nombre)
             {
                 ComandaHistorica aux = arrDeComandas[i];
                 arrDeComandas[i] = arrDeComandas[j];
-                arrDeComandas[j] = aux; 
+                arrDeComandas[j] = aux;
             }
         }
     }
@@ -181,7 +181,7 @@ void CrearMozos(const char* nombre)
     cout << "Mozos.dat creado correctamente" << endl;
 }
 
-//PUNTO 2: Buscar ID de mozo dentro de mozosBYsanti.dat
+//PUNTO 2: Buscar ID de mozo dentro de mozos.dat
 
 int buscarIDdeMozo(const char* nombreBuscado)
 {
@@ -257,8 +257,6 @@ void separarYcrearComandaXdia(const char* RUTA_COM_HIST)
                 c.cantidad = arrDeComandas[i].cantidad;
                 c.comision = arrDeComandas[i].comision;
 
-                //se envio mail preguntando al profe el 05/10/26 a las 19hs
-                //armamos el nombre del archivo del dia sin sprintf
                 char archivoDia[64];
                 strcpy(archivoDia, "../datos/comandas_");
                 agregarTexto(archivoDia, arrDeComandas[i].fecha);
@@ -303,7 +301,7 @@ void OrdenadorDeArchivos(const char* nombre) //tiene la logica para ordenar cada
             }
         }
     }
-    //vuelve a abrir el mismo archivo que le pasamos, y lo reescribe ordenado, si estaba: id=1 [datos] id=2 [datos] id = 1 [datos] ahora esta: id=1 [datos] id=1 [datos] id=2 [datos] 
+    //vuelve a abrir el mismo archivo que le pasamos, y lo reescribe ordenado, si estaba: id=1 [datos] id=2 [datos] id = 1 [datos] ahora esta: id=1 [datos] id=1 [datos] id=2 [datos]
     f = fopen(nombre, "wb");
     if (f == NULL) return;
 
@@ -359,85 +357,78 @@ void OrganizadorDeOrdenador(const char* nombre) //le dice a ordenadorDeArchivos 
 
 //punto 3: Actualizar inventario descontando lo que se vendio con las comandas historicas
 
-//creamos una busqueda binaria ya que inventario.dat esta ordenado por codigo de producto
-int buscarProducto(Producto arrDeProductos[], int len, int codigoBuscado)
-{
-    int inicio = 0;
-    int final = len -1;
-    while(inicio <= final){
-        int medio = (inicio + final) / 2;
-
-        if(arrDeProductos[medio].codigo == codigoBuscado)
-        {
-            return medio;
-        }
-        else if(arrDeProductos[medio].codigo < codigoBuscado)
-        {
-            inicio = medio + 1; //pasa el siguiente
-        }
-        else{
-            final = medio - 1;
-        }
-    }
-    return -1;
-}
-
-void actualizarInventario(const char* RUTA_COM_HIST, const char* RUTA_INV);
 void actualizarInventario(const char* RUTA_COM_HIST, const char* RUTA_INV)
 {
-    // 1) Leer el inventario
-    FILE* fInv = fopen(RUTA_INV, "rb");
+    // Abrir inventario en rb+ para poder leer y grabar sin rehacer el archivo
+    FILE* fInv = fopen(RUTA_INV, "rb+");
     if (fInv == NULL)
     {
         cout << "No se pudo abrir el inventario." << endl;
         return;
     }
 
-    Producto productos[10000];
-    int cantProductos = 0;
+    // Calculamos cuantos registros tiene el archivo
+    fseek(fInv, 0, SEEK_END); // mueve el puntero al final del archivo
+    long cantProductos = ftell(fInv) / sizeof(Producto); // tamaño total / tamaño de un registro
 
-    while (cantProductos < 10000 && fread(&productos[cantProductos], sizeof(Producto), 1, fInv) == 1)
-    {
-        cantProductos++;
-    }
-    fclose(fInv);
-
-    // 2) Descontar stock según las comandas históricas
     FILE* fHist = fopen(RUTA_COM_HIST, "rb");
-    if (fHist == NULL) return;
+    if (fHist == NULL)
+    {
+        fclose(fInv);
+        return;
+    }
 
     ComandaHistorica s;
     while (fread(&s, sizeof(ComandaHistorica), 1, fHist) == 1)
     {
-        int pos = buscarProducto(productos, cantProductos, s.codigoProducto);
+        // Busqueda binaria en el archivo
+        long pri = 0;
+        long ult = cantProductos - 1;
+        long pos = -1;
+
+        while (pri <= ult && pos == -1)
+        {
+            long med = (pri + ult) / 2;
+            fseek(fInv, med * sizeof(Producto), SEEK_SET);
+            Producto p;
+            fread(&p, sizeof(Producto), 1, fInv);
+
+            if (p.codigo == s.codigoProducto)
+            {
+                pos = med;
+            }
+            else if (p.codigo < s.codigoProducto)
+            {
+                pri = med + 1;
+            }
+            else
+            {
+                ult = med - 1;
+            }
+        }
 
         if (pos != -1)
         {
-            productos[pos].stockActual -= s.cantidad;
+            // Posicionarse al inicio del registro, leerlo, actualizarlo y sobreescribirlo
+            fseek(fInv, pos * sizeof(Producto), SEEK_SET);
+            Producto p;
+            fread(&p, sizeof(Producto), 1, fInv);
 
-            if (productos[pos].stockActual < 0)
+            p.stockActual -= s.cantidad;
+            if (p.stockActual < 0)
             {
-                productos[pos].stockActual = 0;
+                p.stockActual = 0;
             }
+
+            // el puntero quedo justo despues del registro leido, retrocedemos y sobreescribimos
+            fseek(fInv, -(long)sizeof(Producto), SEEK_CUR);
+            fwrite(&p, sizeof(Producto), 1, fInv);
         }
     }
     fclose(fHist);
+    fclose(fInv);
 
-    // 3) Escribir el inventario actualizado
-    FILE* fNuevo = fopen(RUTA_INV, "wb");
-    if (fNuevo == NULL)
-    {
-        cout << "No se pudo escribir el inventario" << endl;
-        return;
-    }
-
-    for (int i = 0; i < cantProductos; i++)
-    {
-        fwrite(&productos[i], sizeof(Producto), 1, fNuevo);
-    }
-    fclose(fNuevo);
-
-    cout << "Inventario actualizado escrito en " << RUTA_INV << endl;
+    cout << "Inventario actualizado en " << RUTA_INV << endl;
 }
 
 int main()
